@@ -165,7 +165,7 @@ public class GitHubOAuthController {
         logger.info("Saved repo sharing info in DB with shareId: {}", shareId);
 
         // Step 6: Redirect to frontend
-        String redirectUrl = UriComponentsBuilder.fromHttpUrl("http://localhost:4200/success")
+        String redirectUrl = UriComponentsBuilder.fromHttpUrl("http://localhost:4200/share")
                 .queryParam("shareId", shareId)
                 .build()
                 .toUriString();
