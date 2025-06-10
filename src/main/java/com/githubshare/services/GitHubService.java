@@ -1,8 +1,10 @@
 package com.githubshare.services;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.githubshare.dto.RepoDto;
 import com.githubshare.entity.SharedRepoLink;
+import com.githubshare.exceptions.ExternalServiceException;
+import com.githubshare.exceptions.InvalidRequestException;
+import com.githubshare.exceptions.ResourceNotFoundException;
 import com.githubshare.repos.SharedRepoLinkRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.transaction.Transactional;
@@ -61,76 +63,83 @@ public class GitHubService {
     }
 
     @Transactional
-    public URI processGitHubCallback(String code, HttpServletRequest request) throws Exception {
-        // Step 1: Exchange code for token
-        logger.info("Exchanging code for token...");
-        Map<String, String> tokenRequest = Map.of(
-                "client_id", clientId,
-                "client_secret", clientSecret,
-                "code", code,
-                "redirect_uri", redirectUri
-        );
+    public URI processGitHubCallback(String code, HttpServletRequest request) {
+        try {
+            logger.info("Exchanging code for token...");
+            Map<String, String> tokenRequest = Map.of(
+                    "client_id", clientId,
+                    "client_secret", clientSecret,
+                    "code", code,
+                    "redirect_uri", redirectUri
+            );
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
+            HttpHeaders headers = new HttpHeaders();
+            headers.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
 
-        ResponseEntity<Map> tokenResponse = restTemplate.exchange(
-                "https://github.com/login/oauth/access_token",
-                HttpMethod.POST,
-                new HttpEntity<>(tokenRequest, headers),
-                Map.class
-        );
+            ResponseEntity<Map> tokenResponse = restTemplate.exchange(
+                    "https://github.com/login/oauth/access_token",
+                    HttpMethod.POST,
+                    new HttpEntity<>(tokenRequest, headers),
+                    Map.class
+            );
 
-        String accessToken = (String) tokenResponse.getBody().get("access_token");
+            if (!tokenResponse.getStatusCode().is2xxSuccessful()) {
+                throw new ExternalServiceException("Failed to retrieve access token from GitHub.");
+            }
 
-        // Step 2: Fetch GitHub user info
-        Map userProfile = restTemplate.exchange(
-                "https://api.github.com/user",
-                HttpMethod.GET,
-                new HttpEntity<>(getAuthHeaders(accessToken)),
-                Map.class
-        ).getBody();
+            String accessToken = (String) tokenResponse.getBody().get("access_token");
+            if (accessToken == null) {
+                throw new InvalidRequestException("GitHub did not return an access token.");
+            }
 
-        String login = (String) userProfile.get("login");
+            Map userProfile = restTemplate.exchange(
+                    "https://api.github.com/user",
+                    HttpMethod.GET,
+                    new HttpEntity<>(getAuthHeaders(accessToken)),
+                    Map.class
+            ).getBody();
 
-        // Step 3: Fetch repositories
-        ResponseEntity<List> reposResponse = restTemplate.exchange(
-                "https://api.github.com/user/repos",
-                HttpMethod.GET,
-                new HttpEntity<>(getAuthHeaders(accessToken)),
-                List.class
-        );
+            String login = (String) userProfile.get("login");
 
-        List<Map<String, Object>> reposList = reposResponse.getBody();
-        Map<String, String> repoMap = new HashMap<>();
-        for (Map<String, Object> repo : reposList) {
-            repoMap.put((String) repo.get("name"), (String) repo.get("clone_url"));
+            ResponseEntity<List> reposResponse = restTemplate.exchange(
+                    "https://api.github.com/user/repos",
+                    HttpMethod.GET,
+                    new HttpEntity<>(getAuthHeaders(accessToken)),
+                    List.class
+            );
+
+            List<Map<String, Object>> reposList = reposResponse.getBody();
+            Map<String, String> repoMap = new HashMap<>();
+            for (Map<String, Object> repo : reposList) {
+                repoMap.put((String) repo.get("name"), (String) repo.get("clone_url"));
+            }
+
+            String encryptedToken = encryptToken(accessToken);
+
+            SharedRepoLink repoLink = new SharedRepoLink();
+            String shareId = UUID.randomUUID().toString();
+            repoLink.setShareId(shareId);
+            repoLink.setRepoOwner(login);
+            repoLink.setGithubToken(encryptedToken);
+            repoLink.setCreatedAt(LocalDateTime.now());
+            repoLink.setRepos(repoMap);
+            sharedRepoLinkRepository.save(repoLink);
+
+            return UriComponentsBuilder.fromHttpUrl("http://localhost:4200/share")
+                    .queryParam("shareId", shareId)
+                    .build()
+                    .toUri();
+
+        } catch (Exception ex) {
+            logger.error("OAuth flow failed: {}", ex.getMessage(), ex);
+            throw new ExternalServiceException("OAuth process failed. Please try again.");
         }
-
-        // Step 4: Encrypt token
-        String encryptedToken = encryptToken(accessToken);
-
-        // Step 5: Save to DB
-        SharedRepoLink repoLink = new SharedRepoLink();
-        String shareId = UUID.randomUUID().toString();
-        repoLink.setShareId(shareId);
-        repoLink.setRepoOwner(login);
-        repoLink.setGithubToken(encryptedToken);
-        repoLink.setCreatedAt(LocalDateTime.now());
-        repoLink.setRepos(repoMap);
-        sharedRepoLinkRepository.save(repoLink);
-
-        return UriComponentsBuilder.fromHttpUrl("http://localhost:4200/share")
-                .queryParam("shareId", shareId)
-                .build()
-                .toUri();
     }
 
     public ResponseEntity<List<RepoDto>> searchRepos(String query, String shareId) {
-        Optional<SharedRepoLink> optional = sharedRepoLinkRepository.findByShareId(shareId);
-        if (optional.isEmpty()) return ResponseEntity.notFound().build();
+        SharedRepoLink link = sharedRepoLinkRepository.findByShareId(shareId)
+                .orElseThrow(() -> new ResourceNotFoundException("Shared repository not found for ID: " + shareId));
 
-        SharedRepoLink link = optional.get();
         List<RepoDto> filtered = link.getRepos().entrySet().stream()
                 .filter(e -> e.getKey().toLowerCase().contains(query.toLowerCase()))
                 .map(e -> new RepoDto(e.getKey(), e.getValue(), link.getRepoOwner()))
@@ -140,10 +149,9 @@ public class GitHubService {
     }
 
     public ResponseEntity<?> getSharedRepo(String shareId) {
-        Optional<SharedRepoLink> optional = sharedRepoLinkRepository.findByShareId(shareId);
-        if (optional.isEmpty()) return ResponseEntity.notFound().build();
+        SharedRepoLink link = sharedRepoLinkRepository.findByShareId(shareId)
+                .orElseThrow(() -> new ResourceNotFoundException("No shared repo found for ID: " + shareId));
 
-        SharedRepoLink link = optional.get();
         Map<String, Object> response = Map.of(
                 "repoOwner", link.getRepoOwner(),
                 "avatarUrl", "https://avatars.githubusercontent.com/" + link.getRepoOwner(),
@@ -166,9 +174,6 @@ public class GitHubService {
         return Base64.getEncoder().encodeToString(cipher.doFinal(token.getBytes(StandardCharsets.UTF_8)));
     }
 
-    /**
-     * Decrypts a token encrypted with AES
-     */
     public String decryptToken(String encryptedToken) throws Exception {
         SecretKeySpec keySpec = new SecretKeySpec(encryptionSecret.getBytes(StandardCharsets.UTF_8), "AES");
         Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
@@ -176,6 +181,4 @@ public class GitHubService {
         byte[] decoded = Base64.getDecoder().decode(encryptedToken);
         return new String(cipher.doFinal(decoded), StandardCharsets.UTF_8);
     }
-
-
 }
