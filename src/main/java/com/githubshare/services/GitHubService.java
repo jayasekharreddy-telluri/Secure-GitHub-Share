@@ -1,114 +1,180 @@
 package com.githubshare.services;
 
-
-
-import javax.crypto.Cipher;
-import javax.crypto.spec.SecretKeySpec;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.githubshare.dto.RepoDto;
+import com.githubshare.entity.SharedRepoLink;
+import com.githubshare.repos.SharedRepoLinkRepository;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.transaction.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import javax.crypto.Cipher;
+import javax.crypto.spec.SecretKeySpec;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.util.Base64;
-import java.util.Collections;
-import java.util.Map;
+import java.time.LocalDateTime;
+import java.util.*;
 
 @Service
 public class GitHubService {
 
     private static final Logger logger = LoggerFactory.getLogger(GitHubService.class);
 
+    @Value("${github.client.id}")
+    private String clientId;
+
+    @Value("${github.client.secret}")
+    private String clientSecret;
+
+    @Value("${github.redirect.uri}")
+    private String redirectUri;
+
     @Value("${app.encryption.secret}")
     private String encryptionSecret;
 
     private final RestTemplate restTemplate;
+    private final SharedRepoLinkRepository sharedRepoLinkRepository;
 
-    public GitHubService(RestTemplate restTemplate) {
+    public GitHubService(RestTemplate restTemplate, SharedRepoLinkRepository sharedRepoLinkRepository) {
         this.restTemplate = restTemplate;
+        this.sharedRepoLinkRepository = sharedRepoLinkRepository;
     }
 
+    public URI buildGitHubAuthorizationUri(HttpServletRequest request) {
+        String stateToken = UUID.randomUUID().toString();
+        request.getSession().setAttribute("oauth_state", stateToken);
+
+        return UriComponentsBuilder.fromUriString("https://github.com/login/oauth/authorize")
+                .queryParam("client_id", clientId)
+                .queryParam("redirect_uri", redirectUri)
+                .queryParam("scope", "repo read:user")
+                .queryParam("state", stateToken)
+                .queryParam("prompt", "login")
+                .build()
+                .toUri();
+    }
+
+    @Transactional
+    public URI processGitHubCallback(String code, HttpServletRequest request) throws Exception {
+        // Step 1: Exchange code for token
+        logger.info("Exchanging code for token...");
+        Map<String, String> tokenRequest = Map.of(
+                "client_id", clientId,
+                "client_secret", clientSecret,
+                "code", code,
+                "redirect_uri", redirectUri
+        );
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
+
+        ResponseEntity<Map> tokenResponse = restTemplate.exchange(
+                "https://github.com/login/oauth/access_token",
+                HttpMethod.POST,
+                new HttpEntity<>(tokenRequest, headers),
+                Map.class
+        );
+
+        String accessToken = (String) tokenResponse.getBody().get("access_token");
+
+        // Step 2: Fetch GitHub user info
+        Map userProfile = restTemplate.exchange(
+                "https://api.github.com/user",
+                HttpMethod.GET,
+                new HttpEntity<>(getAuthHeaders(accessToken)),
+                Map.class
+        ).getBody();
+
+        String login = (String) userProfile.get("login");
+
+        // Step 3: Fetch repositories
+        ResponseEntity<List> reposResponse = restTemplate.exchange(
+                "https://api.github.com/user/repos",
+                HttpMethod.GET,
+                new HttpEntity<>(getAuthHeaders(accessToken)),
+                List.class
+        );
+
+        List<Map<String, Object>> reposList = reposResponse.getBody();
+        Map<String, String> repoMap = new HashMap<>();
+        for (Map<String, Object> repo : reposList) {
+            repoMap.put((String) repo.get("name"), (String) repo.get("clone_url"));
+        }
+
+        // Step 4: Encrypt token
+        String encryptedToken = encryptToken(accessToken);
+
+        // Step 5: Save to DB
+        SharedRepoLink repoLink = new SharedRepoLink();
+        String shareId = UUID.randomUUID().toString();
+        repoLink.setShareId(shareId);
+        repoLink.setRepoOwner(login);
+        repoLink.setGithubToken(encryptedToken);
+        repoLink.setCreatedAt(LocalDateTime.now());
+        repoLink.setRepos(repoMap);
+        sharedRepoLinkRepository.save(repoLink);
+
+        return UriComponentsBuilder.fromHttpUrl("http://localhost:4200/share")
+                .queryParam("shareId", shareId)
+                .build()
+                .toUri();
+    }
+
+    public ResponseEntity<List<RepoDto>> searchRepos(String query, String shareId) {
+        Optional<SharedRepoLink> optional = sharedRepoLinkRepository.findByShareId(shareId);
+        if (optional.isEmpty()) return ResponseEntity.notFound().build();
+
+        SharedRepoLink link = optional.get();
+        List<RepoDto> filtered = link.getRepos().entrySet().stream()
+                .filter(e -> e.getKey().toLowerCase().contains(query.toLowerCase()))
+                .map(e -> new RepoDto(e.getKey(), e.getValue(), link.getRepoOwner()))
+                .toList();
+
+        return ResponseEntity.ok(filtered);
+    }
+
+    public ResponseEntity<?> getSharedRepo(String shareId) {
+        Optional<SharedRepoLink> optional = sharedRepoLinkRepository.findByShareId(shareId);
+        if (optional.isEmpty()) return ResponseEntity.notFound().build();
+
+        SharedRepoLink link = optional.get();
+        Map<String, Object> response = Map.of(
+                "repoOwner", link.getRepoOwner(),
+                "avatarUrl", "https://avatars.githubusercontent.com/" + link.getRepoOwner(),
+                "repos", link.getRepos()
+        );
+        return ResponseEntity.ok(response);
+    }
+
+    private HttpHeaders getAuthHeaders(String token) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        headers.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
+        return headers;
+    }
+
+    private String encryptToken(String token) throws Exception {
+        SecretKeySpec keySpec = new SecretKeySpec(encryptionSecret.getBytes(StandardCharsets.UTF_8), "AES");
+        Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
+        cipher.init(Cipher.ENCRYPT_MODE, keySpec);
+        return Base64.getEncoder().encodeToString(cipher.doFinal(token.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    /**
+     * Decrypts a token encrypted with AES
+     */
     public String decryptToken(String encryptedToken) throws Exception {
         SecretKeySpec keySpec = new SecretKeySpec(encryptionSecret.getBytes(StandardCharsets.UTF_8), "AES");
         Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
         cipher.init(Cipher.DECRYPT_MODE, keySpec);
         byte[] decoded = Base64.getDecoder().decode(encryptedToken);
-        byte[] decrypted = cipher.doFinal(decoded);
-        return new String(decrypted, StandardCharsets.UTF_8);
-    }
-
-    public boolean isRepoPrivate(String repoUrl, String accessToken) {
-        try {
-            // Extract owner and repo name from URL
-            // Example repoUrl: https://github.com/owner/repo.git or https://github.com/owner/repo
-            String cleanedUrl = repoUrl.endsWith(".git") ?
-                    repoUrl.substring(0, repoUrl.length() - 4) : repoUrl;
-            String[] parts = cleanedUrl.split("/");
-            if (parts.length < 2) {
-                logger.warn("Invalid repo URL format: {}", repoUrl);
-                return false;
-            }
-            String owner = parts[parts.length - 2];
-            String repo = parts[parts.length - 1];
-
-            String apiUrl = String.format("https://api.github.com/repos/%s/%s", owner, repo);
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setBearerAuth(accessToken);
-            headers.setAccept(java.util.Collections.singletonList(MediaType.APPLICATION_JSON));
-
-            HttpEntity<Void> request = new HttpEntity<>(headers);
-
-            ResponseEntity<Map> response = restTemplate.exchange(apiUrl, HttpMethod.GET, request, Map.class);
-
-            if (response.getStatusCode() != HttpStatus.OK || response.getBody() == null) {
-                logger.warn("GitHub API call failed or returned no data for repo: {}", repoUrl);
-                return false;
-            }
-
-            Object privateFlag = response.getBody().get("private");
-            if (privateFlag instanceof Boolean) {
-                return (Boolean) privateFlag;
-            }
-
-            return false;
-        } catch (Exception e) {
-            logger.error("Error checking repo privacy for URL {}: {}", repoUrl, e.getMessage());
-            return false;
-        }
-    }
-
-    public Object getReadOnlyRepoContent(String repoUrl, String accessToken) throws Exception {
-        try {
-            // Clean up the repoUrl to get the format: owner/repo
-            String cleanedRepoPath = repoUrl
-                    .replace("https://github.com/", "")
-                    .replace(".git", "");
-
-            String apiUrl = "https://api.github.com/repos/" + cleanedRepoPath + "/contents/";
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setBearerAuth(accessToken);
-            headers.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
-
-            HttpEntity<String> entity = new HttpEntity<>(headers);
-
-            ResponseEntity<Object> response = restTemplate.exchange(
-                    apiUrl,
-                    HttpMethod.GET,
-                    entity,
-                    Object.class
-            );
-
-            return response.getBody();
-        } catch (HttpClientErrorException e) {
-            logger.error("GitHub API error: {}", e.getMessage());
-            throw new Exception("Failed to fetch repo content", e);
-        }
+        return new String(cipher.doFinal(decoded), StandardCharsets.UTF_8);
     }
 
 

@@ -12,9 +12,13 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.*;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestTemplate;
 
 import java.time.LocalDateTime;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -25,17 +29,21 @@ public class ViewerLinkService {
     private final ViewerLinkRepository viewerLinkRepository;
     private final SharedRepoLinkRepository sharedRepoLinkRepository;
     private final GitHubService gitHubService;
+    private final RestTemplate restTemplate;
 
     @Value("${app.viewer.base-url}")
     private String viewerBaseUrl;
 
     public ViewerLinkService(ViewerLinkRepository viewerLinkRepository,
                              SharedRepoLinkRepository sharedRepoLinkRepository,
-                             GitHubService gitHubService) {
+                             GitHubService gitHubService,
+                             RestTemplate restTemplate) {
         this.viewerLinkRepository = viewerLinkRepository;
         this.sharedRepoLinkRepository = sharedRepoLinkRepository;
         this.gitHubService = gitHubService;
+        this.restTemplate = restTemplate;
     }
+
     public void createViewerLink(ViewerLinkRequest request) {
         logger.info("Attempting to create viewer link for repo: {}", request.getRepoUrl());
 
@@ -43,6 +51,7 @@ public class ViewerLinkService {
                 .orElseThrow(() -> new InvalidRequestException("Invalid shareId: " + request.getShareId()));
 
         String decryptedToken;
+
         try {
             decryptedToken = gitHubService.decryptToken(sharedRepo.getGithubToken());
         } catch (Exception e) {
@@ -52,7 +61,7 @@ public class ViewerLinkService {
 
         boolean isPrivate;
         try {
-            isPrivate = gitHubService.isRepoPrivate(request.getRepoUrl(), decryptedToken);
+            isPrivate = isRepoPrivate(request.getRepoUrl(), decryptedToken);
         } catch (Exception e) {
             logger.error("Failed to check if repository is private: {}", request.getRepoUrl(), e);
             throw new ExternalServiceException("Failed to validate repository privacy");
@@ -80,6 +89,44 @@ public class ViewerLinkService {
         logger.info("Viewer link successfully created: {}", viewerId);
     }
 
+    public boolean isRepoPrivate(String repoUrl, String accessToken) {
+        try {
+            String cleanedUrl = repoUrl.replace(".git", "").trim();
+            String[] parts = cleanedUrl.split("/");
+            String owner = parts[parts.length - 2];
+            String repoName = parts[parts.length - 1];
+
+            String apiUrl = "https://api.github.com/repos/" + owner + "/" + repoName;
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("Authorization", "Bearer " + accessToken);
+            headers.set("Accept", "application/vnd.github+json");
+
+            HttpEntity<String> entity = new HttpEntity<>(headers);
+            ResponseEntity<Map> response = new RestTemplate().exchange(apiUrl, HttpMethod.GET, entity, Map.class);
+
+            Object isPrivate = response.getBody().get("private");
+            return isPrivate instanceof Boolean && (Boolean) isPrivate;
+        } catch (HttpClientErrorException.NotFound e) {
+            logger.error("Repository not found: {}", repoUrl);
+            throw new InvalidRequestException("Repository not found or URL is incorrect.");
+        } catch (Exception e) {
+            logger.error("Error while checking repo privacy for URL: {}", repoUrl, e);
+            throw new ExternalServiceException("Failed to check repository privacy.");
+        }
+    }
+
+
+    private String convertToApiUrl(String repoUrl) {
+        if (!repoUrl.startsWith("https://github.com/")) {
+            throw new InvalidRequestException("Invalid GitHub repository URL: " + repoUrl);
+        }
+        String[] parts = repoUrl.replace("https://github.com/", "").split("/");
+        if (parts.length < 2) {
+            throw new InvalidRequestException("Malformed GitHub repository URL: " + repoUrl);
+        }
+        return "https://api.github.com/repos/" + parts[0] + "/" + parts[1];
+    }
 
     public void updateViewerLink(String viewerId, ViewerLinkUpdateRequest updateRequest) {
         ViewerLink viewerLink = viewerLinkRepository.findByViewerId(viewerId)
@@ -137,40 +184,6 @@ public class ViewerLinkService {
 
         return new ViewerLinkAccessDTO(viewerLink.getRepoUrl(), viewerLink.getViewsLeft());
     }
-
-    public ViewerLinkContentResponse getViewerContent(String viewerId) {
-        ViewerLink viewerLink = viewerLinkRepository.findByViewerId(viewerId)
-                .orElseThrow(() -> new ResourceNotFoundException("Viewer link not found: " + viewerId));
-
-        if (viewerLink.isDeleted() || viewerLink.getViewsLeft() <= 0 || viewerLink.getExpiresAt().isBefore(LocalDateTime.now())) {
-            logger.warn("Invalid or expired link access attempt for: {}", viewerId);
-            throw new LinkExpiredException("Link expired or no views left");
-        }
-
-        SharedRepoLink sharedRepo = sharedRepoLinkRepository.findByShareId(viewerLink.getShareId())
-                .orElseThrow(() -> new InvalidRequestException("Invalid shareId for viewer link: " + viewerLink.getShareId()));
-
-        try {
-            String token = gitHubService.decryptToken(sharedRepo.getGithubToken());
-            Object content = gitHubService.getReadOnlyRepoContent(viewerLink.getRepoUrl(), token);
-
-            viewerLink.setViewsLeft(viewerLink.getViewsLeft() - 1);
-            viewerLinkRepository.save(viewerLink);
-
-            logger.info("Successfully fetched content for viewer link: {}", viewerId);
-
-            return new ViewerLinkContentResponse(
-                    viewerLink.getRepoUrl(),
-                    viewerLink.getExpiresAt().toString(),
-                    viewerLink.getViewsLeft(),
-                    content
-            );
-        } catch (Exception e) {
-            logger.error("Failed to fetch content from GitHub for repo: {}", viewerLink.getRepoUrl(), e);
-            throw new ResourceNotFoundException("Failed to fetch content from GitHub");
-        }
-    }
-
 
     public Page<ViewerLinkDTO> getAllViewerLinks(Pageable pageable) {
         LocalDateTime now = LocalDateTime.now();

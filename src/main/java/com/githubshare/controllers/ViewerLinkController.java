@@ -44,11 +44,6 @@ public class ViewerLinkController {
         return ResponseEntity.ok(accessDTO);
     }
 
-    @GetMapping("/content/{viewerId}")
-    public ResponseEntity<ViewerLinkContentResponse> getViewerContent(@PathVariable String viewerId) {
-        ViewerLinkContentResponse contentResponse = viewerLinkService.getViewerContent(viewerId);
-        return ResponseEntity.ok(contentResponse);
-    }
 
     @GetMapping
     public ResponseEntity<Page<ViewerLinkDTO>> getAllViewerLinks(@PageableDefault(size = 5) Pageable pageable) {
