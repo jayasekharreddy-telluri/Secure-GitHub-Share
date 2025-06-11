@@ -116,14 +116,28 @@ public class GitHubService {
 
             String encryptedToken = encryptToken(accessToken);
 
-            SharedRepoLink repoLink = new SharedRepoLink();
-            String shareId = UUID.randomUUID().toString();
-            repoLink.setShareId(shareId);
-            repoLink.setRepoOwner(login);
-            repoLink.setGithubToken(encryptedToken);
-            repoLink.setCreatedAt(LocalDateTime.now());
-            repoLink.setRepos(repoMap);
-            sharedRepoLinkRepository.save(repoLink);
+            // 🆕 Reuse logic
+            Optional<SharedRepoLink> existingLinkOpt = sharedRepoLinkRepository.findByRepoOwner(login);
+            String shareId;
+
+            if (existingLinkOpt.isPresent()) {
+                SharedRepoLink existing = existingLinkOpt.get();
+                existing.setGithubToken(encryptedToken);
+                existing.setRepos(repoMap);
+                sharedRepoLinkRepository.save(existing);
+                shareId = existing.getShareId();
+                logger.info("Reusing existing shareId: {}", shareId);
+            } else {
+                SharedRepoLink repoLink = new SharedRepoLink();
+                shareId = UUID.randomUUID().toString();
+                repoLink.setShareId(shareId);
+                repoLink.setRepoOwner(login);
+                repoLink.setGithubToken(encryptedToken);
+                repoLink.setCreatedAt(LocalDateTime.now());
+                repoLink.setRepos(repoMap);
+                sharedRepoLinkRepository.save(repoLink);
+                logger.info("Created new shareId: {}", shareId);
+            }
 
             return UriComponentsBuilder.fromHttpUrl("http://localhost:4200/share")
                     .queryParam("shareId", shareId)

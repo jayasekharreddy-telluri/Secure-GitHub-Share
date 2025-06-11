@@ -7,6 +7,7 @@ import com.githubshare.exceptions.*;
 import com.githubshare.repos.SharedRepoLinkRepository;
 import com.githubshare.repos.ViewerLinkRepository;
 
+import jakarta.transaction.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -47,11 +48,31 @@ public class ViewerLinkService {
     public void createViewerLink(ViewerLinkRequest request) {
         logger.info("Attempting to create viewer link for repo: {}", request.getRepoUrl());
 
+        // 1. Find shared repo link by shareId
         SharedRepoLink sharedRepo = sharedRepoLinkRepository.findByShareId(request.getShareId())
                 .orElseThrow(() -> new InvalidRequestException("Invalid shareId: " + request.getShareId()));
 
-        String decryptedToken;
+        // 2. Parse repo URL to get owner and repo name
+        String cleanedUrl = request.getRepoUrl().replace(".git", "").trim();
+        String[] parts = cleanedUrl.split("/");
+        if (parts.length < 2) {
+            throw new InvalidRequestException("Invalid GitHub repository URL: " + request.getRepoUrl());
+        }
+        String owner = parts[parts.length - 2];
+        String repoName = parts[parts.length - 1];
 
+        // 3. Validate owner matches sharedRepo
+        if (!sharedRepo.getRepoOwner().equalsIgnoreCase(owner)) {
+            throw new InvalidRequestException("Repo owner does not match the shared owner for shareId.");
+        }
+
+        // 4. Validate repo is among shared repos
+        if (!sharedRepo.getRepos().containsKey(repoName)) {
+            throw new InvalidRequestException("This repo is not included in the shared mapping.");
+        }
+
+        // 5. Decrypt token
+        String decryptedToken;
         try {
             decryptedToken = gitHubService.decryptToken(sharedRepo.getGithubToken());
         } catch (Exception e) {
@@ -59,6 +80,7 @@ public class ViewerLinkService {
             throw new ExternalServiceException("Failed to decrypt GitHub token");
         }
 
+        // 6. Check if repo is private
         boolean isPrivate;
         try {
             isPrivate = isRepoPrivate(request.getRepoUrl(), decryptedToken);
@@ -72,6 +94,7 @@ public class ViewerLinkService {
             throw new InvalidRequestException("Repository must be private");
         }
 
+        // 7. Generate viewer link
         String viewerId = UUID.randomUUID().toString().replace("-", "").substring(0, 10);
         LocalDateTime expiresAt = LocalDateTime.now().plusMinutes(request.getExpiresInMinutes());
 
@@ -204,4 +227,34 @@ public class ViewerLinkService {
             );
         });
     }
+
+    @Transactional
+    public ViewerLink useViewerLink(String viewerId) {
+        ViewerLink link = viewerLinkRepository.findByViewerId(viewerId)
+                .orElseThrow(() -> new ResourceNotFoundException("Viewer link not found for ID: " + viewerId));
+
+        // 1. Check if deleted
+        if (link.isDeleted()) {
+            throw new InvalidRequestException("This link has been deleted.");
+        }
+
+        // 2. Check if expired
+        if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
+            throw new InvalidRequestException("This link has expired.");
+        }
+
+        // 3. Check if views are exhausted
+        if (link.getViewsLeft() <= 0) {
+            throw new InvalidRequestException("View limit exceeded for this link.");
+        }
+
+        // 4. Decrement views left and save
+        link.setViewsLeft(link.getViewsLeft() - 1);
+        viewerLinkRepository.save(link);
+
+        return link;
+    }
+
+
+
 }
