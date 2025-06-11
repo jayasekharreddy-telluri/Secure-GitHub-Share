@@ -208,9 +208,11 @@ public class ViewerLinkService {
         return new ViewerLinkAccessDTO(viewerLink.getRepoUrl(), viewerLink.getViewsLeft());
     }
 
-    public Page<ViewerLinkDTO> getAllViewerLinks(Pageable pageable) {
+    public Page<ViewerLinkDTO> getAllViewerLinks(String shareId, Pageable pageable) {
         LocalDateTime now = LocalDateTime.now();
-        Page<ViewerLink> page = viewerLinkRepository.findAll(pageable);
+
+        // ✅ Only fetch links belonging to this user
+        Page<ViewerLink> page = viewerLinkRepository.findByShareId(shareId, pageable);
 
         return page.map(link -> {
             String status = (link.isDeleted() || link.getViewsLeft() <= 0 || link.getExpiresAt().isBefore(now))
@@ -227,6 +229,7 @@ public class ViewerLinkService {
             );
         });
     }
+
 
     @Transactional
     public ViewerLink useViewerLink(String viewerId) {

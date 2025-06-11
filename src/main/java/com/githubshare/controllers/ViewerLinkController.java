@@ -2,9 +2,11 @@ package com.githubshare.controllers;
 
 import com.githubshare.dto.*;
 import com.githubshare.services.ViewerLinkService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -43,11 +45,14 @@ public class ViewerLinkController {
         ViewerLinkAccessDTO accessDTO = viewerLinkService.accessRepository(viewerId);
         return ResponseEntity.ok(accessDTO);
     }
-
-
     @GetMapping
-    public ResponseEntity<Page<ViewerLinkDTO>> getAllViewerLinks(@PageableDefault(size = 5) Pageable pageable) {
-        Page<ViewerLinkDTO> page = viewerLinkService.getAllViewerLinks(pageable);
+    public ResponseEntity<Page<ViewerLinkDTO>> getAllViewerLinks(
+            @RequestHeader("X-Share-Id") String shareId,
+            @PageableDefault(size = 5) Pageable pageable) {
+
+        System.out.println("shareId...............  " + shareId);
+        Page<ViewerLinkDTO> page = viewerLinkService.getAllViewerLinks(shareId, pageable);
         return ResponseEntity.ok(page);
     }
+
 }
