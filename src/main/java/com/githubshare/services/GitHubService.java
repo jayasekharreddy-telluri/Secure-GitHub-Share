@@ -6,6 +6,7 @@ import com.githubshare.exceptions.ExternalServiceException;
 import com.githubshare.exceptions.InvalidRequestException;
 import com.githubshare.exceptions.ResourceNotFoundException;
 import com.githubshare.repos.SharedRepoLinkRepository;
+import com.githubshare.utils.EncryptionUtils;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.transaction.Transactional;
 import org.slf4j.Logger;
@@ -16,10 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
-import javax.crypto.Cipher;
-import javax.crypto.spec.SecretKeySpec;
 import java.net.URI;
-import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.*;
 
@@ -114,9 +112,8 @@ public class GitHubService {
                 repoMap.put((String) repo.get("name"), (String) repo.get("clone_url"));
             }
 
-            String encryptedToken = encryptToken(accessToken);
+            String encryptedToken = EncryptionUtils.encrypt(accessToken);
 
-            // 🆕 Reuse logic
             Optional<SharedRepoLink> existingLinkOpt = sharedRepoLinkRepository.findByRepoOwner(login);
             String shareId;
 
@@ -179,20 +176,5 @@ public class GitHubService {
         headers.setBearerAuth(token);
         headers.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
         return headers;
-    }
-
-    private String encryptToken(String token) throws Exception {
-        SecretKeySpec keySpec = new SecretKeySpec(encryptionSecret.getBytes(StandardCharsets.UTF_8), "AES");
-        Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
-        cipher.init(Cipher.ENCRYPT_MODE, keySpec);
-        return Base64.getEncoder().encodeToString(cipher.doFinal(token.getBytes(StandardCharsets.UTF_8)));
-    }
-
-    public String decryptToken(String encryptedToken) throws Exception {
-        SecretKeySpec keySpec = new SecretKeySpec(encryptionSecret.getBytes(StandardCharsets.UTF_8), "AES");
-        Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
-        cipher.init(Cipher.DECRYPT_MODE, keySpec);
-        byte[] decoded = Base64.getDecoder().decode(encryptedToken);
-        return new String(cipher.doFinal(decoded), StandardCharsets.UTF_8);
     }
 }
