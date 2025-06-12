@@ -10,5 +10,7 @@ import java.util.Optional;
 
 public interface SharedRepoLinkRepository extends JpaRepository<SharedRepoLink, Long> {
     Optional<SharedRepoLink> findByShareId(String shareId);
+    Optional<SharedRepoLink> findByRepoOwner(String repoOwner);
+
 
 }
