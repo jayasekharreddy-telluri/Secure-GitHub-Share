@@ -22,4 +22,13 @@ public class RepoViewerController {
         List<FileNodeDto> fileTree = repoViewerService.getRepoFileTree(viewerId);
         return ResponseEntity.ok(fileTree);
     }
+
+    @GetMapping("/file-content")
+    public ResponseEntity<String> getFileContent(
+            @RequestParam("viewerId") String viewerId,
+            @RequestParam("path") String path
+    ) {
+        String content = repoViewerService.getFileContent(viewerId, path);
+        return ResponseEntity.ok(content);
+    }
 }

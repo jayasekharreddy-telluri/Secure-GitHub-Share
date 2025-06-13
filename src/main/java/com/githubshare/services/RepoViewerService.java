@@ -39,4 +39,25 @@ public class RepoViewerService {
         // 4. Call GitHub API to get the file tree
         return gitHubRepoViewerService.getFileTree(owner, repo,viewerLink.getShareId());
     }
+
+    public String getFileContent(String viewerId, String path) {
+        // 1. Validate and decrement view count
+        ViewerLink viewerLink = viewerLinkService.useViewerLink(viewerId);
+
+        // 2. Parse owner/repo from URL
+        String repoUrl = viewerLink.getRepoUrl();
+        String cleanUrl = repoUrl.replace("https://github.com/", "").replace(".git", "");
+        String[] parts = cleanUrl.split("/");
+
+        if (parts.length < 2) {
+            throw new InvalidRequestException("Invalid GitHub repository URL");
+        }
+
+        String owner = parts[0];
+        String repo = parts[1];
+
+        // 3. Fetch file content using GitHubRepoViewerService
+        return gitHubRepoViewerService.getFileContent(owner, repo, path, viewerLink.getShareId());
+    }
+
 }
