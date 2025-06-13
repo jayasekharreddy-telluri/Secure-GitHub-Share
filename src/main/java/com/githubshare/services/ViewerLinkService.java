@@ -7,6 +7,7 @@ import com.githubshare.exceptions.*;
 import com.githubshare.repos.SharedRepoLinkRepository;
 import com.githubshare.repos.ViewerLinkRepository;
 
+import com.githubshare.utils.EncryptionUtils;
 import jakarta.transaction.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,6 +32,7 @@ public class ViewerLinkService {
     private final SharedRepoLinkRepository sharedRepoLinkRepository;
     private final GitHubService gitHubService;
     private final RestTemplate restTemplate;
+
 
     @Value("${app.viewer.base-url}")
     private String viewerBaseUrl;
@@ -74,7 +76,7 @@ public class ViewerLinkService {
         // 5. Decrypt token
         String decryptedToken;
         try {
-            decryptedToken = gitHubService.decryptToken(sharedRepo.getGithubToken());
+            decryptedToken = EncryptionUtils.decrypt(sharedRepo.getGithubToken());
         } catch (Exception e) {
             logger.error("Token decryption failed for shareId: {}", request.getShareId(), e);
             throw new ExternalServiceException("Failed to decrypt GitHub token");
