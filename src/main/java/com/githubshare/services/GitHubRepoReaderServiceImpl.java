@@ -1,28 +1,31 @@
 package com.githubshare.services;
 
-import com.githubshare.dto.FileNodeDto;
+import com.githubshare.dto.FileNodeDTO;
 import com.githubshare.entity.SharedRepoLink;
 import com.githubshare.exceptions.InvalidRequestException;
 import com.githubshare.repos.SharedRepoLinkRepository;
 import com.githubshare.utils.EncryptionUtils;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 @Service
-public class GitHubRepoViewerService {
+public class GitHubRepoReaderServiceImpl implements GitHubRepoReaderService {
 
     private final SharedRepoLinkRepository sharedRepoLinkRepository;
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate;
 
-    public GitHubRepoViewerService(SharedRepoLinkRepository sharedRepoLinkRepository) {
+    public GitHubRepoReaderServiceImpl(SharedRepoLinkRepository sharedRepoLinkRepository, RestTemplate restTemplate) {
         this.sharedRepoLinkRepository = sharedRepoLinkRepository;
+        this.restTemplate = restTemplate;
     }
-
-    public List<FileNodeDto> getFileTree(String owner, String repoName, String shareId) {
+    @Override
+    @Transactional(readOnly = true)
+    public List<FileNodeDTO> getFileTree(String owner, String repoName, String shareId) {
         SharedRepoLink sharedRepoLink = sharedRepoLinkRepository.findByShareId(shareId)
                 .orElseThrow(() -> new InvalidRequestException("Invalid shareId: " + shareId));
 
@@ -35,78 +38,70 @@ public class GitHubRepoViewerService {
             throw new InvalidRequestException("Repository '" + repoName + "' not found in shared list for owner: " + owner);
         }
 
-        String accessToken;
-        try {
-            accessToken = EncryptionUtils.decrypt(sharedRepoLink.getGithubToken());
-        } catch (Exception e) {
-            throw new InvalidRequestException("Failed to decrypt GitHub token: " + e.getMessage());
-        }
+        String accessToken = decryptToken(sharedRepoLink);
 
-        // Fetch root directory
-        String apiUrl = String.format("https://api.github.com/repos/%s/%s/contents", owner, repoName);
+        // Tree API (recursive fetch of the entire structure)
+        String apiUrl = String.format(
+                "https://api.github.com/repos/%s/%s/git/trees/main?recursive=1",
+                owner, repoName
+        );
+
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
         headers.setAccept(List.of(MediaType.APPLICATION_JSON));
         HttpEntity<Void> request = new HttpEntity<>(headers);
 
-        ResponseEntity<List> response;
+        ResponseEntity<Map> response;
         try {
-            response = restTemplate.exchange(apiUrl, HttpMethod.GET, request, List.class);
+            response = restTemplate.exchange(apiUrl, HttpMethod.GET, request, Map.class);
         } catch (Exception e) {
-            throw new InvalidRequestException("GitHub API error while fetching root files: " + e.getMessage());
+            throw new InvalidRequestException("GitHub Tree API error: " + e.getMessage());
         }
 
-        List<Map<String, Object>> items = response.getBody();
-        if (items == null) return Collections.emptyList();
-
-        List<FileNodeDto> result = new ArrayList<>();
-        for (Map<String, Object> item : items) {
-            result.add(buildFileNode(item, owner, repoName, accessToken));
+        Map<String, Object> body = response.getBody();
+        if (body == null || !body.containsKey("tree")) {
+            return Collections.emptyList();
         }
 
-        return result;
+        List<Map<String, Object>> tree = (List<Map<String, Object>>) body.get("tree");
+        return buildFileTreeFromFlatList(tree);
     }
 
 
+    private List<FileNodeDTO> buildFileTreeFromFlatList(List<Map<String, Object>> flatList) {
+        Map<String, FileNodeDTO> pathMap = new HashMap<>();
+        FileNodeDTO root = new FileNodeDTO("", "", true, new ArrayList<>());
 
-    private FileNodeDto buildFileNode(Map<String, Object> item, String owner, String repoName, String accessToken) {
-        FileNodeDto node = new FileNodeDto();
-        node.setName((String) item.get("name"));
-        node.setPath((String) item.get("path"));
-        node.setDirectory("dir".equals(item.get("type")));
+        for (Map<String, Object> node : flatList) {
+            String path = (String) node.get("path");
+            String type = (String) node.get("type");
+            boolean isFolder = "tree".equals(type);
 
-        if (node.isDirectory()) {
-            node.setChildren(fetchChildren(owner, repoName, node.getPath(), accessToken));
-        } else {
-            node.setChildren(new ArrayList<>());
-        }
+            FileNodeDTO fileNode = new FileNodeDTO(
+                    path.substring(path.lastIndexOf('/') + 1),
+                    path,
+                    isFolder,
+                    isFolder ? new ArrayList<>() : null
+            );
 
-        return node;
-    }
+            pathMap.put(path, fileNode);
 
-    private List<FileNodeDto> fetchChildren(String owner, String repoName, String path, String accessToken) {
-        String url = String.format("https://api.github.com/repos/%s/%s/contents/%s", owner, repoName, path);
-        HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(accessToken);
-        headers.setAccept(List.of(MediaType.APPLICATION_JSON));
-        HttpEntity<Void> request = new HttpEntity<>(headers);
-
-        try {
-            ResponseEntity<List> response = restTemplate.exchange(url, HttpMethod.GET, request, List.class);
-            List<Map<String, Object>> items = response.getBody();
-            if (items == null) return Collections.emptyList();
-
-            List<FileNodeDto> children = new ArrayList<>();
-            for (Map<String, Object> item : items) {
-                children.add(buildFileNode(item, owner, repoName, accessToken));
+            if (!path.contains("/")) {
+                root.getChildren().add(fileNode);
+            } else {
+                String parentPath = path.substring(0, path.lastIndexOf('/'));
+                FileNodeDTO parent = pathMap.get(parentPath);
+                if (parent != null && parent.getChildren() != null) {
+                    parent.getChildren().add(fileNode);
+                }
             }
-
-            return children;
-        } catch (Exception e) {
-            throw new InvalidRequestException("Error while fetching children for path '" + path + "': " + e.getMessage());
         }
+
+        return root.getChildren();
     }
 
+    @Override
+    @Transactional(readOnly = true)
     public String getFileContent(String owner, String repoName, String path, String shareId) {
         SharedRepoLink sharedRepoLink = sharedRepoLinkRepository.findByShareId(shareId)
                 .orElseThrow(() -> new InvalidRequestException("Invalid shareId: " + shareId));
@@ -120,12 +115,7 @@ public class GitHubRepoViewerService {
             throw new InvalidRequestException("Repository '" + repoName + "' not found in shared list for owner: " + owner);
         }
 
-        String accessToken;
-        try {
-            accessToken = EncryptionUtils.decrypt(sharedRepoLink.getGithubToken());
-        } catch (Exception e) {
-            throw new InvalidRequestException("Failed to decrypt GitHub token: " + e.getMessage());
-        }
+        String accessToken = decryptToken(sharedRepoLink);
 
         // GitHub API to get file content metadata (base64-encoded)
         String apiUrl = String.format("https://api.github.com/repos/%s/%s/contents/%s", owner, repoName, path);
@@ -148,8 +138,7 @@ public class GitHubRepoViewerService {
                 throw new InvalidRequestException("No content found for file: " + path);
             }
 
-            // ✅ Clean up base64 string before decoding
-            String cleanBase64 = encodedContent.replaceAll("\\s", ""); // removes \n, \r, tabs, spaces
+            String cleanBase64 = encodedContent.replaceAll("\\s", "");
             byte[] decodedBytes = Base64.getDecoder().decode(cleanBase64);
             return new String(decodedBytes, StandardCharsets.UTF_8);
 
@@ -158,6 +147,11 @@ public class GitHubRepoViewerService {
         }
     }
 
-
-
+    private String decryptToken(SharedRepoLink link) {
+        try {
+            return EncryptionUtils.decrypt(link.getGithubToken());
+        } catch (Exception e) {
+            throw new InvalidRequestException("Failed to decrypt GitHub token: " + e.getMessage());
+        }
+    }
 }
