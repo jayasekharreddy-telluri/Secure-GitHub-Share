@@ -1,5 +1,6 @@
 package com.githubshare.services;
 
+import com.githubshare.dto.BranchDTO;
 import com.githubshare.dto.RepoDTO;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
@@ -12,4 +13,5 @@ public interface GitHubOAuthService {
     URI processGitHubCallback(String code, HttpServletRequest request);
     ResponseEntity<List<RepoDTO>> searchRepos(String query, String shareId);
     ResponseEntity<?> getSharedRepo(String shareId);
+    List<BranchDTO> getBranchesForRepo(String repo, String shareId);
 }

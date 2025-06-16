@@ -38,11 +38,6 @@ public class ViewerLinkController {
         return ResponseEntity.ok(new SuccessDTO("Viewer link marked as deleted"));
     }
 
-    @GetMapping("/viewer/{viewerId}")
-    public ResponseEntity<ViewerLinkAccessDTO> viewRepository(@PathVariable String viewerId) {
-        ViewerLinkAccessDTO accessDTO = viewerLinkServiceImpl.accessRepository(viewerId);
-        return ResponseEntity.ok(accessDTO);
-    }
     @GetMapping
     public ResponseEntity<Page<ViewerLinkDTO>> getAllViewerLinks(
             @RequestHeader("X-Share-Id") String shareId,

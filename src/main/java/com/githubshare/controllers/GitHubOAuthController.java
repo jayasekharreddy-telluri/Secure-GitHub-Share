@@ -1,6 +1,6 @@
-// ✅ Updated GitHubOAuthController.java
 package com.githubshare.controllers;
 
+import com.githubshare.dto.BranchDTO;
 import com.githubshare.dto.RepoDTO;
 import com.githubshare.exceptions.InvalidRequestException;
 import com.githubshare.services.GitHubOAuthService;
@@ -49,7 +49,7 @@ public class GitHubOAuthController {
         return new ResponseEntity<>(headers, HttpStatus.FOUND);
     }
 
-    @GetMapping("/shared-repo-links/search")
+    @GetMapping("/repo-search")
     public ResponseEntity<List<RepoDTO>> searchRepos(
             @RequestParam("q") String query,
             @RequestParam("shareId") String shareId) {
@@ -64,11 +64,27 @@ public class GitHubOAuthController {
         return gitHubOAuthServiceImpl.searchRepos(query, shareId);
     }
 
-    @GetMapping("/shared-repo/{shareId}")
-    public ResponseEntity<?> getSharedRepo(@PathVariable String shareId) {
+    @GetMapping("/repo/{shareId}")
+    public ResponseEntity<?> getRepo(@PathVariable String shareId) {
         if (shareId == null || shareId.isBlank()) {
             throw new InvalidRequestException("Share ID cannot be null or empty");
         }
         return gitHubOAuthServiceImpl.getSharedRepo(shareId);
     }
+
+    @GetMapping("/repo/{shareId}/branches")
+    public ResponseEntity<List<BranchDTO>> getBranchesByShareIdAndRepo(
+            @PathVariable String shareId,
+            @RequestParam("repo") String repo) {
+
+        if (shareId.isBlank() || repo.isBlank()) {
+            throw new InvalidRequestException("shareId and repo are required");
+        }
+
+        List<BranchDTO> branches = gitHubOAuthServiceImpl.getBranchesForRepo(shareId, repo);
+        return ResponseEntity.ok(branches);
+    }
+
+
+
 }

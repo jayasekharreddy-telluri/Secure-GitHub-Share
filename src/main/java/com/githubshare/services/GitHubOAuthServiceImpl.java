@@ -1,6 +1,6 @@
-// ✅ Updated GitHubOAuthServiceImpl.java
 package com.githubshare.services;
 
+import com.githubshare.dto.BranchDTO;
 import com.githubshare.dto.RepoDTO;
 import com.githubshare.entity.SharedRepoLink;
 import com.githubshare.exceptions.ExternalServiceException;
@@ -12,6 +12,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -198,4 +199,67 @@ public class GitHubOAuthServiceImpl implements GitHubOAuthService {
         headers.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
         return headers;
     }
+
+    @Override
+    public List<BranchDTO> getBranchesForRepo(String shareId, String repo) {
+
+        SharedRepoLink sharedRepoLink = sharedRepoLinkRepository.findByShareId(shareId)
+                .orElseThrow(() -> new InvalidRequestException("Invalid shareId: " + shareId));
+
+        String owner = sharedRepoLink.getRepoOwner();
+
+        if (!sharedRepoLink.getRepoOwner().equalsIgnoreCase(owner)) {
+            throw new InvalidRequestException("Owner mismatch.");
+        }
+
+        Map<String, String> repos = sharedRepoLink.getRepos();
+        System.out.println("Repos map keys: " + repos.keySet());
+
+        String repoUrl = repos.get(repo);
+        if (repoUrl == null) {
+            throw new InvalidRequestException("Repo '" + repo + "' not found for shareId: " + shareId);
+        }
+
+        String accessToken;
+        try {
+            accessToken = EncryptionUtils.decrypt(sharedRepoLink.getGithubToken());
+        } catch (Exception e) {
+            throw new InvalidRequestException("Failed to decrypt access token: " + e.getMessage());
+        }
+
+        String url = String.format("https://api.github.com/repos/%s/%s/branches", owner, repo);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(accessToken);
+        headers.setAccept(List.of(MediaType.APPLICATION_JSON));
+        HttpEntity<Void> request = new HttpEntity<>(headers);
+
+        try {
+            ResponseEntity<List<Map<String, Object>>> response = restTemplate.exchange(
+                    url,
+                    HttpMethod.GET,
+                    request,
+                    new ParameterizedTypeReference<>() {}
+            );
+
+            List<Map<String, Object>> body = response.getBody();
+            if (body == null) return List.of();
+
+            List<BranchDTO> branches = new ArrayList<>();
+            for (Map<String, Object> branch : body) {
+                String name = (String) branch.get("name");
+                Map<String, Object> commit = (Map<String, Object>) branch.get("commit");
+                String sha = commit != null ? (String) commit.get("sha") : null;
+                branches.add(new BranchDTO(name, sha));
+            }
+
+            return branches;
+
+        } catch (Exception e) {
+            throw new InvalidRequestException("Error fetching branches: " + e.getMessage());
+        }
+    }
+
+
+
+
 }

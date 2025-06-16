@@ -19,13 +19,15 @@ public class GitHubRepoReaderServiceImpl implements GitHubRepoReaderService {
     private final SharedRepoLinkRepository sharedRepoLinkRepository;
     private final RestTemplate restTemplate;
 
-    public GitHubRepoReaderServiceImpl(SharedRepoLinkRepository sharedRepoLinkRepository, RestTemplate restTemplate) {
+    public GitHubRepoReaderServiceImpl(SharedRepoLinkRepository sharedRepoLinkRepository,
+                                       RestTemplate restTemplate) {
         this.sharedRepoLinkRepository = sharedRepoLinkRepository;
         this.restTemplate = restTemplate;
     }
+
     @Override
     @Transactional(readOnly = true)
-    public List<FileNodeDTO> getFileTree(String owner, String repoName, String shareId) {
+    public List<FileNodeDTO> getFileTree(String owner, String repoName, String shareId, String branchName) {
         SharedRepoLink sharedRepoLink = sharedRepoLinkRepository.findByShareId(shareId)
                 .orElseThrow(() -> new InvalidRequestException("Invalid shareId: " + shareId));
 
@@ -38,12 +40,12 @@ public class GitHubRepoReaderServiceImpl implements GitHubRepoReaderService {
             throw new InvalidRequestException("Repository '" + repoName + "' not found in shared list for owner: " + owner);
         }
 
+        String branch = (branchName == null || branchName.isBlank()) ? "main" : branchName;
         String accessToken = decryptToken(sharedRepoLink);
 
-        // Tree API (recursive fetch of the entire structure)
         String apiUrl = String.format(
-                "https://api.github.com/repos/%s/%s/git/trees/main?recursive=1",
-                owner, repoName
+                "https://api.github.com/repos/%s/%s/git/trees/%s?recursive=1",
+                owner, repoName, branch
         );
 
         HttpHeaders headers = new HttpHeaders();
@@ -66,7 +68,6 @@ public class GitHubRepoReaderServiceImpl implements GitHubRepoReaderService {
         List<Map<String, Object>> tree = (List<Map<String, Object>>) body.get("tree");
         return buildFileTreeFromFlatList(tree);
     }
-
 
     private List<FileNodeDTO> buildFileTreeFromFlatList(List<Map<String, Object>> flatList) {
         Map<String, FileNodeDTO> pathMap = new HashMap<>();
@@ -102,7 +103,7 @@ public class GitHubRepoReaderServiceImpl implements GitHubRepoReaderService {
 
     @Override
     @Transactional(readOnly = true)
-    public String getFileContent(String owner, String repoName, String path, String shareId) {
+    public String getFileContent(String owner, String repoName, String path, String shareId, String branchName) {
         SharedRepoLink sharedRepoLink = sharedRepoLinkRepository.findByShareId(shareId)
                 .orElseThrow(() -> new InvalidRequestException("Invalid shareId: " + shareId));
 
@@ -115,10 +116,13 @@ public class GitHubRepoReaderServiceImpl implements GitHubRepoReaderService {
             throw new InvalidRequestException("Repository '" + repoName + "' not found in shared list for owner: " + owner);
         }
 
+        String branch = (branchName == null || branchName.isBlank()) ? "main" : branchName;
         String accessToken = decryptToken(sharedRepoLink);
 
-        // GitHub API to get file content metadata (base64-encoded)
-        String apiUrl = String.format("https://api.github.com/repos/%s/%s/contents/%s", owner, repoName, path);
+        String apiUrl = String.format(
+                "https://api.github.com/repos/%s/%s/contents/%s?ref=%s",
+                owner, repoName, path, branch
+        );
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);

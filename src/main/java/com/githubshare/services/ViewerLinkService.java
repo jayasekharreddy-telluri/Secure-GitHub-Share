@@ -6,19 +6,10 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 public interface ViewerLinkService {
-
     void createViewerLink(ViewerLinkRequest request);
-
     void updateViewerLink(String viewerId, ViewerLinkUpdateRequest updateRequest);
-
     void deleteViewerLink(String viewerId);
-
-    ViewerLinkAccessDTO accessRepository(String viewerId);
-
     Page<ViewerLinkDTO> getAllViewerLinks(String shareId, Pageable pageable);
-
-    ViewerLink useViewerLink(String viewerId);
-
-    ViewerLink getViewerLinkById(String viewerId);
+    ViewerLink verifyViewerLink(String viewerId);
 
 }

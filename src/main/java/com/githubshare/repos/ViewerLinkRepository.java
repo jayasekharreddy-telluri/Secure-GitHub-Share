@@ -11,7 +11,6 @@ import java.util.Optional;
 public interface ViewerLinkRepository extends JpaRepository<ViewerLink, Long> {
     Optional<ViewerLink> findByViewerId(String viewerId);
     List<ViewerLink> findByShareId(String shareId);
-    // ViewerLinkRepository.java
     Page<ViewerLink> findByShareId(String shareId, Pageable pageable);
 
 

@@ -22,30 +22,14 @@ public class ViewerLink {
     @Column(nullable = false)
     private boolean deleted = false;
 
-
-    public boolean isDeleted() {
-        return deleted;
-    }
-
-    public void setDeleted(boolean deleted) {
-        this.deleted = deleted;
-    }
-
+    @Column(nullable = true)
+    private String branchName;
 
     // Constructors
     public ViewerLink() {}
 
-
-    // Getters and Setters
-    public Long getId() {
-        return id;
-    }
-
-    public String getViewerId() {
-        return viewerId;
-    }
-
-    public ViewerLink(Long id, String viewerId, String repoUrl, int maxViews, int viewsLeft, LocalDateTime expiresAt, LocalDateTime createdAt, String shareId, boolean deleted) {
+    public ViewerLink(Long id, String viewerId, String repoUrl, int maxViews, int viewsLeft, LocalDateTime expiresAt,
+                      LocalDateTime createdAt, String shareId, boolean deleted, String branchName) {
         this.id = id;
         this.viewerId = viewerId;
         this.repoUrl = repoUrl;
@@ -55,6 +39,16 @@ public class ViewerLink {
         this.createdAt = createdAt;
         this.shareId = shareId;
         this.deleted = deleted;
+        this.branchName = branchName;
+    }
+
+    // Getters and Setters
+    public Long getId() {
+        return id;
+    }
+
+    public String getViewerId() {
+        return viewerId;
     }
 
     public void setViewerId(String viewerId) {
@@ -107,5 +101,21 @@ public class ViewerLink {
 
     public void setShareId(String shareId) {
         this.shareId = shareId;
+    }
+
+    public boolean isDeleted() {
+        return deleted;
+    }
+
+    public void setDeleted(boolean deleted) {
+        this.deleted = deleted;
+    }
+
+    public String getBranchName() {
+        return branchName;
+    }
+
+    public void setBranchName(String branchName) {
+        this.branchName = branchName;
     }
 }

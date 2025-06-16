@@ -44,7 +44,6 @@ public class ViewerLinkServiceImpl implements ViewerLinkService {
         this.gitHubServiceImpl = gitHubServiceImpl;
         this.restTemplate = restTemplate;
     }
-
     @Override
     @Transactional
     public void createViewerLink(ViewerLinkRequest request) {
@@ -53,18 +52,16 @@ public class ViewerLinkServiceImpl implements ViewerLinkService {
         SharedRepoLink sharedRepo = sharedRepoLinkRepository.findByShareId(request.getShareId())
                 .orElseThrow(() -> new InvalidRequestException("Invalid shareId: " + request.getShareId()));
 
-        String[] parts = parseRepoUrl(request.getRepoUrl());
-        String owner = parts[0];
-        String repoName = parts[1];
+        String repoName = request.getRepoUrl(); // This is just the name like "private_repo_three"
+        String repoOwner = sharedRepo.getRepoOwner();
 
-        if (!sharedRepo.getRepoOwner().equalsIgnoreCase(owner)) {
-            throw new InvalidRequestException("Repo owner does not match the shared owner for shareId.");
-        }
-
-        if (!sharedRepo.getRepos().containsKey(repoName)) {
+        // Get full GitHub repo URL from sharedRepo.repos map
+        String fullRepoUrl = sharedRepo.getRepos().get(repoName);
+        if (fullRepoUrl == null) {
             throw new InvalidRequestException("This repo is not included in the shared mapping.");
         }
 
+        // Token decryption
         String decryptedToken;
         try {
             decryptedToken = EncryptionUtils.decrypt(sharedRepo.getGithubToken());
@@ -73,9 +70,10 @@ public class ViewerLinkServiceImpl implements ViewerLinkService {
             throw new ExternalServiceException("Failed to decrypt GitHub token");
         }
 
-        boolean isPrivate = isRepoPrivate(request.getRepoUrl(), decryptedToken);
+        // Check if it's a private repo
+        boolean isPrivate = isRepoPrivate(fullRepoUrl, decryptedToken);
         if (!isPrivate) {
-            logger.warn("Repository is public or inaccessible: {}", request.getRepoUrl());
+            logger.warn("Repository is public or inaccessible: {}", fullRepoUrl);
             throw new InvalidRequestException("Repository must be private");
         }
 
@@ -85,16 +83,18 @@ public class ViewerLinkServiceImpl implements ViewerLinkService {
         ViewerLink viewerLink = new ViewerLink();
         viewerLink.setViewerId(viewerId);
         viewerLink.setShareId(request.getShareId());
-        viewerLink.setRepoUrl(request.getRepoUrl());
+        viewerLink.setRepoUrl(fullRepoUrl);
         viewerLink.setMaxViews(request.getMaxViews());
         viewerLink.setViewsLeft(request.getMaxViews());
         viewerLink.setExpiresAt(expiresAt);
         viewerLink.setCreatedAt(LocalDateTime.now());
         viewerLink.setDeleted(false);
+        viewerLink.setBranchName(request.getBranchName());
 
         viewerLinkRepository.save(viewerLink);
         logger.info("Viewer link successfully created: {}", viewerId);
     }
+
 
     private String[] parseRepoUrl(String repoUrl) {
         String cleanedUrl = repoUrl.replace(".git", "").trim();
@@ -138,19 +138,18 @@ public class ViewerLinkServiceImpl implements ViewerLinkService {
 
         logger.info("Validating viewer link before update: {}", viewerId);
 
-        // ✅ 1. Check if the link is expired
+
         if (viewerLink.getExpiresAt() != null && viewerLink.getExpiresAt().isBefore(LocalDateTime.now())) {
             throw new InvalidRequestException("Cannot update: Viewer link is already expired.");
         }
 
-        // ✅ 2. Check if no views left
+
         if (viewerLink.getViewsLeft() <= 0) {
             throw new InvalidRequestException("Cannot update: Viewer link has no views left.");
         }
 
         logger.info("Updating viewer link: {}", viewerId);
 
-        // ✅ 3. Update max views and adjust views left
         if (updateRequest.getMaxViews() != null) {
             int usedViews = viewerLink.getMaxViews() - viewerLink.getViewsLeft();
             int newMaxViews = updateRequest.getMaxViews();
@@ -158,7 +157,6 @@ public class ViewerLinkServiceImpl implements ViewerLinkService {
             viewerLink.setViewsLeft(Math.max(0, newMaxViews - usedViews));
         }
 
-        // ✅ 4. Update expiration time
         if (updateRequest.getExpiresInMinutes() != null) {
             viewerLink.setExpiresAt(LocalDateTime.now().plusMinutes(updateRequest.getExpiresInMinutes()));
         }
@@ -177,35 +175,6 @@ public class ViewerLinkServiceImpl implements ViewerLinkService {
         viewerLink.setDeleted(true);
         viewerLinkRepository.delete(viewerLink);
         logger.info("Viewer link deleted: {}", viewerId);
-    }
-
-    @Override
-    @Transactional
-    public ViewerLinkAccessDTO accessRepository(String viewerId) {
-        ViewerLink viewerLink = viewerLinkRepository.findByViewerId(viewerId)
-                .orElseThrow(() -> new ResourceNotFoundException("Viewer link not found: " + viewerId));
-
-        if (viewerLink.isDeleted()) {
-            logger.warn("Attempt to access deleted viewer link: {}", viewerId);
-            throw new LinkExpiredException("This viewer link has been deleted.");
-        }
-
-        if (viewerLink.getViewsLeft() <= 0) {
-            logger.warn("Viewer link exhausted: {}", viewerId);
-            throw new LinkExpiredException("No views remaining.");
-        }
-
-        if (viewerLink.getExpiresAt().isBefore(LocalDateTime.now())) {
-            logger.warn("Viewer link expired: {}", viewerId);
-            throw new LinkExpiredException("Link has expired.");
-        }
-
-        viewerLink.setViewsLeft(viewerLink.getViewsLeft() - 1);
-        viewerLinkRepository.saveAndFlush(viewerLink);
-
-        logger.info("Viewer link {} accessed, remaining views: {}", viewerId, viewerLink.getViewsLeft());
-
-        return new ViewerLinkAccessDTO(viewerLink.getRepoUrl(), viewerLink.getViewsLeft());
     }
 
     @Override
@@ -229,9 +198,10 @@ public class ViewerLinkServiceImpl implements ViewerLinkService {
         });
     }
 
+
     @Override
     @Transactional
-    public ViewerLink useViewerLink(String viewerId) {
+    public ViewerLink verifyViewerLink(String viewerId) {
         ViewerLink link = viewerLinkRepository.findByViewerId(viewerId)
                 .orElseThrow(() -> new ResourceNotFoundException("Viewer link not found for ID: " + viewerId));
 
@@ -246,9 +216,6 @@ public class ViewerLinkServiceImpl implements ViewerLinkService {
         if (link.getViewsLeft() <= 0) {
             throw new InvalidRequestException("View limit exceeded for this link.");
         }
-
-        link.setViewsLeft(link.getViewsLeft() - 1);
-        viewerLinkRepository.save(link);
 
         return link;
     }
