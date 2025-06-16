@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api")
@@ -75,15 +76,27 @@ public class GitHubOAuthController {
     @GetMapping("/repo/{shareId}/branches")
     public ResponseEntity<List<BranchDTO>> getBranchesByShareIdAndRepo(
             @PathVariable String shareId,
-            @RequestParam("repo") String repo) {
+            @RequestParam("repo") String repo,
+            @RequestParam(value = "search", required = false) String search) {
 
         if (shareId.isBlank() || repo.isBlank()) {
             throw new InvalidRequestException("shareId and repo are required");
         }
 
         List<BranchDTO> branches = gitHubOAuthServiceImpl.getBranchesForRepo(shareId, repo);
+
+        // Filter branches if search term is provided
+        if (search != null && !search.isBlank()) {
+            String lowerSearch = search.toLowerCase();
+            branches = branches.stream()
+                    .filter(branch -> branch.getName().toLowerCase().contains(lowerSearch))
+                    .collect(Collectors.toList());
+        }
+
         return ResponseEntity.ok(branches);
     }
+
+
 
 
 
