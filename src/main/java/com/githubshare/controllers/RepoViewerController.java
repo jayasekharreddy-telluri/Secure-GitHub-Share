@@ -1,8 +1,11 @@
 package com.githubshare.controllers;
 
-import com.githubshare.dto.FileNodeDto;
+import com.githubshare.dto.FileNodeDTO;
+import com.githubshare.exceptions.InvalidRequestException;
 import com.githubshare.services.RepoViewerService;
+import com.githubshare.services.RepoViewerServiceImpl;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -11,15 +14,19 @@ import java.util.List;
 @RequestMapping("/api/repo")
 public class RepoViewerController {
 
-    private final RepoViewerService repoViewerService;
+    private final RepoViewerService repoViewerServiceImpl;
 
-    public RepoViewerController(RepoViewerService repoViewerService) {
-        this.repoViewerService = repoViewerService;
+    public RepoViewerController(RepoViewerService repoViewerServiceImpl) {
+        this.repoViewerServiceImpl = repoViewerServiceImpl;
     }
 
     @GetMapping("/viewer-file-tree")
-    public ResponseEntity<List<FileNodeDto>> getFileTree(@RequestParam("viewerId") String viewerId) {
-        List<FileNodeDto> fileTree = repoViewerService.getRepoFileTree(viewerId);
+    public ResponseEntity<List<FileNodeDTO>> getFileTree(@RequestParam("viewerId") String viewerId) {
+        if (!StringUtils.hasText(viewerId)) {
+            throw new InvalidRequestException("viewerId must not be blank");
+        }
+
+        List<FileNodeDTO> fileTree = repoViewerServiceImpl.getRepoFileTree(viewerId);
         return ResponseEntity.ok(fileTree);
     }
 
@@ -28,7 +35,14 @@ public class RepoViewerController {
             @RequestParam("viewerId") String viewerId,
             @RequestParam("path") String path
     ) {
-        String content = repoViewerService.getFileContent(viewerId, path);
+        if (!StringUtils.hasText(viewerId)) {
+            throw new InvalidRequestException("viewerId must not be blank");
+        }
+        if (!StringUtils.hasText(path)) {
+            throw new InvalidRequestException("path must not be blank");
+        }
+
+        String content = repoViewerServiceImpl.getFileContent(viewerId, path);
         return ResponseEntity.ok(content);
     }
 }

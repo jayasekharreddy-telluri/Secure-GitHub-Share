@@ -4,9 +4,10 @@ public class ViewerLinkRequest {
     private String repoUrl;
     private int maxViews;
     private int expiresInMinutes;
-    private String shareId;  // <--- add this
+    private String shareId;
+    private String branchName;
 
-    // getters and setters
+    // Getters and setters
 
     public String getRepoUrl() {
         return repoUrl;
@@ -38,5 +39,13 @@ public class ViewerLinkRequest {
 
     public void setShareId(String shareId) {
         this.shareId = shareId;
+    }
+
+    public String getBranchName() {
+        return branchName;
+    }
+
+    public void setBranchName(String branchName) {
+        this.branchName = branchName;
     }
 }

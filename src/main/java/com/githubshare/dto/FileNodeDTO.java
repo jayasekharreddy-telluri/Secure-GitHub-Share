@@ -3,15 +3,15 @@ package com.githubshare.dto;
 
 import java.util.List;
 
-public class FileNodeDto {
+public class FileNodeDTO {
     private String name;
     private String path;
     private boolean directory;
-    private List<FileNodeDto> children;
+    private List<FileNodeDTO> children;
 
-    public FileNodeDto() {}
+    public FileNodeDTO() {}
 
-    public FileNodeDto(String name, String path, boolean directory, List<FileNodeDto> children) {
+    public FileNodeDTO(String name, String path, boolean directory, List<FileNodeDTO> children) {
         this.name = name;
         this.path = path;
         this.directory = directory;
@@ -30,7 +30,7 @@ public class FileNodeDto {
         return directory;
     }
 
-    public List<FileNodeDto> getChildren() {
+    public List<FileNodeDTO> getChildren() {
         return children;
     }
 
@@ -46,7 +46,7 @@ public class FileNodeDto {
         this.directory = directory;
     }
 
-    public void setChildren(List<FileNodeDto> children) {
+    public void setChildren(List<FileNodeDTO> children) {
         this.children = children;
     }
 }

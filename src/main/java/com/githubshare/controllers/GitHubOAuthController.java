@@ -1,9 +1,9 @@
 package com.githubshare.controllers;
 
-import com.githubshare.dto.RepoDto;
+import com.githubshare.dto.BranchDTO;
+import com.githubshare.dto.RepoDTO;
 import com.githubshare.exceptions.InvalidRequestException;
-import com.githubshare.exceptions.ResourceNotFoundException;
-import com.githubshare.services.GitHubService;
+import com.githubshare.services.GitHubOAuthService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,24 +12,25 @@ import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RestController
+@RequestMapping("/api")
 @CrossOrigin(origins = "http://localhost:4200")
-@RequestMapping("/api/")
 public class GitHubOAuthController {
 
     private static final Logger logger = LoggerFactory.getLogger(GitHubOAuthController.class);
 
-    private final GitHubService gitHubOAuthService;
+    private final GitHubOAuthService gitHubOAuthServiceImpl;
 
-    public GitHubOAuthController(GitHubService gitHubOAuthService) {
-        this.gitHubOAuthService = gitHubOAuthService;
+    public GitHubOAuthController(GitHubOAuthService gitHubOAuthServiceImpl) {
+        this.gitHubOAuthServiceImpl = gitHubOAuthServiceImpl;
     }
 
     @GetMapping("/auth/github")
     public ResponseEntity<Void> redirectToGitHub(HttpServletRequest request) {
         logger.info("Initiating GitHub OAuth redirect...");
-        URI redirectUri = gitHubOAuthService.buildGitHubAuthorizationUri(request);
+        URI redirectUri = gitHubOAuthServiceImpl.buildGitHubAuthorizationUri(request);
         HttpHeaders headers = new HttpHeaders();
         headers.setLocation(redirectUri);
         return new ResponseEntity<>(headers, HttpStatus.FOUND);
@@ -43,28 +44,60 @@ public class GitHubOAuthController {
             throw new InvalidRequestException("Missing authorization code in callback.");
         }
 
-        URI redirectToFrontend = gitHubOAuthService.processGitHubCallback(code, request);
+        URI redirectToFrontend = gitHubOAuthServiceImpl.processGitHubCallback(code, request);
         HttpHeaders headers = new HttpHeaders();
         headers.setLocation(redirectToFrontend);
         return new ResponseEntity<>(headers, HttpStatus.FOUND);
     }
 
-    @GetMapping("shared-repo-links/search")
-    public ResponseEntity<List<RepoDto>> searchRepos(@RequestParam("q") String query, @RequestParam("shareId") String shareId) {
+    @GetMapping("/repo-search")
+    public ResponseEntity<List<RepoDTO>> searchRepos(
+            @RequestParam("q") String query,
+            @RequestParam("shareId") String shareId) {
+
         if (query == null || query.isBlank()) {
             throw new InvalidRequestException("Query parameter cannot be empty");
         }
         if (shareId == null || shareId.isBlank()) {
             throw new InvalidRequestException("Share ID cannot be empty");
         }
-        return gitHubOAuthService.searchRepos(query, shareId);
+
+        return gitHubOAuthServiceImpl.searchRepos(query, shareId);
     }
 
-    @GetMapping("shared-repo/{shareId}")
-    public ResponseEntity<?> getSharedRepo(@PathVariable String shareId) {
+    @GetMapping("/repo/{shareId}")
+    public ResponseEntity<?> getRepo(@PathVariable String shareId) {
         if (shareId == null || shareId.isBlank()) {
             throw new InvalidRequestException("Share ID cannot be null or empty");
         }
-        return gitHubOAuthService.getSharedRepo(shareId);
+        return gitHubOAuthServiceImpl.getSharedRepo(shareId);
     }
+
+    @GetMapping("/repo/{shareId}/branches")
+    public ResponseEntity<List<BranchDTO>> getBranchesByShareIdAndRepo(
+            @PathVariable String shareId,
+            @RequestParam("repo") String repo,
+            @RequestParam(value = "search", required = false) String search) {
+
+        if (shareId.isBlank() || repo.isBlank()) {
+            throw new InvalidRequestException("shareId and repo are required");
+        }
+
+        List<BranchDTO> branches = gitHubOAuthServiceImpl.getBranchesForRepo(shareId, repo);
+
+        // Filter branches if search term is provided
+        if (search != null && !search.isBlank()) {
+            String lowerSearch = search.toLowerCase();
+            branches = branches.stream()
+                    .filter(branch -> branch.getName().toLowerCase().contains(lowerSearch))
+                    .collect(Collectors.toList());
+        }
+
+        return ResponseEntity.ok(branches);
+    }
+
+
+
+
+
 }
