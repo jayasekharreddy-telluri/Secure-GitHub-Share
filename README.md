@@ -1,4 +1,3 @@
-````markdown
 # PrivyCode – Backend Service
 
 [![Project Status](https://img.shields.io/badge/status-active-brightgreen)](https://github.com/jai/privycode-backend)
