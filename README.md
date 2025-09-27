@@ -92,21 +92,11 @@ http://localhost:8080
 ## Demo & Project Summary
 
 [Demo Video Link](https://drive.google.com/file/d/1FhyNal4D_cMGuzl7r_OQdQGg82jWoxiJ/view?usp=drive_link)
-Full project summary is available in PDF: `PrivyCode_FullStack_Demo_Jai.pdf`
 
 ---
 
-## Screenshots
-
-### Viewer Link Dashboard
-
-![Viewer Link Dashboard](images/viewer-dashboard.png)
-
-### Repository Viewer
-
-![Repository Viewer](images/repo-viewer.png)
-
-*(Replace the placeholders with your actual screenshots in `/images` folder)*
+### Application-Demo-Dashboard
+<img width="1338" height="670" alt="Screenshot 2025-08-13 101621" src="https://github.com/user-attachments/assets/66e7ac0d-60a9-4597-be38-84824021ecc8" />
 
 ---
 
