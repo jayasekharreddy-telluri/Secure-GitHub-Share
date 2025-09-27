@@ -1,4 +1,4 @@
-# PrivyCode – Backend Service
+# Secure-GitHub-Share – Backend Service
 
 [![Project Status](https://img.shields.io/badge/status-active-brightgreen)](https://github.com/jai/privycode-backend)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
